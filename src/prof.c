@@ -8,6 +8,7 @@
 #include "jemalloc/internal/malloc_io.h"
 #include "jemalloc/internal/mutex.h"
 #include "jemalloc/internal/emitter.h"
+#include "jemalloc/internal/util.h"
 
 /******************************************************************************/
 
@@ -30,7 +31,10 @@
 /******************************************************************************/
 /* Data. */
 
-bool		opt_prof = false;
+static struct custom_shm_data global_custom_shm_data = {false, false, false, 0, 0, {0}};
+volatile struct custom_shm_data* custom_shm_data_ptr = &global_custom_shm_data;
+
+bool		opt_prof = true;  // 初始化结束后会重新设置为 false
 bool		opt_prof_active = true;
 bool		opt_prof_thread_active_init = true;
 size_t		opt_lg_prof_sample = LG_PROF_SAMPLE_DEFAULT;
@@ -1905,6 +1909,7 @@ label_write_error:
 static bool
 prof_dump(tsd_t *tsd, bool propagate_err, const char *filename,
     bool leakcheck) {
+	// write(1, "prof_dump\n", 11);
 	cassert(config_prof);
 	assert(tsd_reentrancy_level_get(tsd) == 0);
 
@@ -2081,6 +2086,7 @@ prof_idump(tsdn_t *tsdn) {
 
 bool
 prof_mdump(tsd_t *tsd, const char *filename) {
+	// write(1, "prof_mdump\n", 12);
 	cassert(config_prof);
 	assert(tsd_reentrancy_level_get(tsd) == 0);
 
@@ -2089,6 +2095,9 @@ prof_mdump(tsd_t *tsd, const char *filename) {
 	}
 	char filename_buf[DUMP_FILENAME_BUFSIZE];
 	if (filename == NULL) {
+		// char tmp[1024];
+		// sprintf(tmp, "prof_mdump: filename is null, opt_prof_prefix: %s\n", opt_prof_prefix);
+		// write(1, tmp, strlen(tmp));
 		/* No filename specified, so automatically generate one. */
 		if (opt_prof_prefix[0] == '\0') {
 			return true;

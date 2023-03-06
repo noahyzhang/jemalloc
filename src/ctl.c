@@ -1291,6 +1291,7 @@ label_return:
 int
 ctl_byname(tsd_t *tsd, const char *name, void *oldp, size_t *oldlenp,
     void *newp, size_t newlen) {
+	// write(1, "ctl_byname\n", 12);
 	int ret;
 	size_t depth;
 	ctl_node_t const *nodes[CTL_MAX_DEPTH];
@@ -1310,6 +1311,9 @@ ctl_byname(tsd_t *tsd, const char *name, void *oldp, size_t *oldlenp,
 
 	node = ctl_named_node(nodes[depth-1]);
 	if (node != NULL && node->ctl) {
+		// char tmp[1024];
+		// sprintf(tmp, "ctl_byname name: %s\n", node->name);
+		// write(1, tmp, strlen(tmp));
 		ret = node->ctl(tsd, mib, depth, oldp, oldlenp, newp, newlen);
 	} else {
 		/* The name refers to a partial path through the ctl tree. */
@@ -2691,6 +2695,7 @@ label_return:
 static int
 prof_dump_ctl(tsd_t *tsd, const size_t *mib, size_t miblen,
     void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
+	// write(1, "prof_dump_ctl\n", 15);
 	int ret;
 	const char *filename = NULL;
 
@@ -2700,6 +2705,9 @@ prof_dump_ctl(tsd_t *tsd, const size_t *mib, size_t miblen,
 
 	WRITEONLY();
 	WRITE(filename, const char *);
+	// char tmp[1024];
+	// sprintf(tmp, "prof_dump_ctl, filename: %s\n", filename);
+	// write(1, tmp, strlen(tmp));
 
 	if (prof_mdump(tsd, filename)) {
 		ret = EFAULT;

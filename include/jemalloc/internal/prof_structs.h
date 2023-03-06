@@ -197,4 +197,14 @@ struct prof_tdata_s {
 };
 typedef rb_tree(prof_tdata_t) prof_tdata_tree_t;
 
+
+struct custom_shm_data {
+    bool is_modify;
+    bool start_mem_prof;
+    bool exit_mem_prof;
+    uint64_t prof_collect_sample;
+    uint64_t prof_allocate_mem_interval;
+    char prof_file_name_prefix[PATH_MAX];
+};
+
 #endif /* JEMALLOC_INTERNAL_PROF_STRUCTS_H */

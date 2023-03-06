@@ -64,4 +64,8 @@ get_errno(void) {
 
 #undef UTIL_INLINE
 
+uint64_t get_curr_timestamp_sec();
+char* get_curr_time_sec_str(bool is_short);
+char* convert_time_sec_str(uint64_t tm_sec, bool is_short);
+
 #endif /* JEMALLOC_INTERNAL_UTIL_H */

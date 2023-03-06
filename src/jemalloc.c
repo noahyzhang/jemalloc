@@ -19,6 +19,8 @@
 #include "jemalloc/internal/sz.h"
 #include "jemalloc/internal/ticker.h"
 #include "jemalloc/internal/util.h"
+#include "jemalloc/internal/prof_structs.h"
+// #include <stdio.h>
 
 /******************************************************************************/
 /* Data. */
@@ -218,8 +220,113 @@ malloc_init_a0(void) {
 	return false;
 }
 
+
+extern struct custom_shm_data* custom_shm_data_ptr;
+#define CUSTOM_SHM_KEY 0x20230214
+
+#include <sys/shm.h>
+#include <string.h>
+
+void init_custom_shm() {
+	int shm_id = shmget(CUSTOM_SHM_KEY, sizeof(struct custom_shm_data), IPC_CREAT | 0666);
+	if (shm_id < 0) {
+		char tmp_err[1024];
+		sprintf(tmp_err, "shmget failed, errno: %s\n\n", strerror(errno));
+		write(1, tmp_err, 50);
+		return;
+	}
+	void* res = shmat(shm_id, 0, 0);
+	if (res == (void*)-1) {
+		write(1, "shmat failed\n", 14);
+		return;
+	}
+	custom_shm_data_ptr = (struct custom_shm_data*)res;
+	custom_shm_data_ptr->is_modify = false;
+	return;
+}
+
+uint64_t get_curr_timestamp_sec() {
+	struct timespec tm;
+    clock_gettime(CLOCK_REALTIME, &tm);
+	return tm.tv_sec;
+}
+
+char* convert_time_sec_str(uint64_t tm_sec, bool is_short) {
+	time_t tm = tm_sec;
+    struct tm convert_tm;
+    localtime_r(&tm, &convert_tm);
+    static char tm_str[64];
+	const char* format = is_short ? "%H%M%S" : "%Y%m%d_%H%M%S";
+    strftime(tm_str, sizeof(tm_str), format, &convert_tm);
+    return tm_str;
+}
+
+char* get_curr_time_sec_str(bool is_short) {
+    struct timespec origin_tm;
+    clock_gettime(CLOCK_REALTIME, &origin_tm);
+    time_t tm = origin_tm.tv_sec;
+    struct tm convert_tm;
+    localtime_r(&tm, &convert_tm);
+    static char tm_str[64];
+	const char* format = is_short ? "%H%M%S" : "%Y%m%d_%H%M%S";
+    strftime(tm_str, sizeof(tm_str), format, &convert_tm);
+    return tm_str;
+}
+
+pthread_mutex_t handle_prof_config_prof_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void handle_mem_prof_config_modify() {
+	pthread_mutex_lock(&handle_prof_config_prof_mutex);
+	// 如果配置没有改变，直接返回
+	if (!custom_shm_data_ptr->is_modify) {
+		pthread_mutex_unlock(&handle_prof_config_prof_mutex);
+		return;
+	}
+	custom_shm_data_ptr->is_modify = false;
+	pthread_mutex_unlock(&handle_prof_config_prof_mutex);
+
+	// write(1, "handle_mem_prof_config_modify\n", 31);
+	static uint64_t prof_start_timestamp = 0;
+	// 如果需要开始分析。开始和结束是互斥的关系
+	if (custom_shm_data_ptr->start_mem_prof) {
+		write(1, "start custom mem prof\n", 23);
+		if (custom_shm_data_ptr->prof_collect_sample > 0) {
+			opt_lg_prof_sample = custom_shm_data_ptr->prof_collect_sample;
+		}
+		if (custom_shm_data_ptr->prof_allocate_mem_interval > 0) {
+			opt_lg_prof_interval = custom_shm_data_ptr->prof_allocate_mem_interval;
+		}
+		size_t len = strlen(custom_shm_data_ptr->prof_file_name_prefix);
+		if (len > 0) {
+			strncpy(opt_prof_prefix, custom_shm_data_ptr->prof_file_name_prefix, len);
+		}
+		prof_start_timestamp = get_curr_timestamp_sec();
+		opt_prof = true;
+	} else if (custom_shm_data_ptr->exit_mem_prof) {
+		write(1, "exit custom mem prof\n", 22);
+		// 内存 profiler 结束前一定输出一个分析文件
+		/* "<prefix>.<pid>.<seq>.<v>.heap" */
+		char filename[128];
+		malloc_snprintf(filename, 128, "%s.mem_profiler.%d.%s_%s.heap",
+			opt_prof_prefix, getpid(), convert_time_sec_str(prof_start_timestamp, false), get_curr_time_sec_str(true));
+		prof_mdump(tsd_fetch(), filename);
+		opt_prof = false;
+	}
+	return;
+}
+
 JEMALLOC_ALWAYS_INLINE bool
 malloc_init(void) {
+	// if (config_prof) {
+	// 	write(1, "malloc_init of config_prof is true\n", 36);
+	// } else {
+	// 	write(1, "malloc_init of config_prof is false\n", 37);
+	// }
+	// if (opt_prof) {
+	// 	write(1, "malloc_init of opt_prof is true\n", 33);
+	// } else {
+	// 	write(1, "malloc_init of opt_prof is false\n", 34);
+	// }
 	if (unlikely(!malloc_initialized()) && malloc_init_hard()) {
 		return true;
 	}
@@ -1021,6 +1128,9 @@ static void
 malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
     bool initial_call, const char *opts_cache[MALLOC_CONF_NSOURCES],
     char buf[PATH_MAX + 1]) {
+	// const char* tmp = "malloc_conf_init_helper\n";
+	// write(1, tmp, strlen(tmp));
+
 	static const char *opts_explain[MALLOC_CONF_NSOURCES] = {
 		"string specified via --with-malloc-conf",
 		"string pointed to by the global variable malloc_conf",
@@ -1360,6 +1470,19 @@ malloc_conf_init_helper(sc_data_t *sc_data, unsigned bin_shard_sizes[SC_NBINS],
 				} while (!err && vlen_left > 0);
 				CONF_CONTINUE;
 			}
+			// const char* tmp_2 = "config_prof, opt_prof\n";
+			// write(1, tmp_2, strlen(tmp_2));
+			// if (config_prof) {
+			// 	write(1, "config_prof true\n", 18);
+			// } else {
+			// 	write(1, "config_prof false\n", 19);
+			// }
+			// if (opt_prof) {
+			// 	write(1, "opt_prof true\n", 15);
+			// } else {
+			// 	write(1, "opt_prof false\n", 16);
+			// }
+
 			if (config_prof) {
 				CONF_HANDLE_BOOL(opt_prof, "prof")
 				CONF_HANDLE_CHAR_P(opt_prof_prefix,
@@ -1477,6 +1600,8 @@ malloc_init_hard_needed(void) {
 
 static bool
 malloc_init_hard_a0_locked() {
+	// const char* tmp = "malloc_init_hard_a0_loked\n";
+	// write(1, tmp, strlen(tmp));
 	malloc_initializer = INITIALIZER;
 
 	JEMALLOC_DIAGNOSTIC_PUSH
@@ -2026,6 +2151,7 @@ compute_size_with_overflow(bool may_overflow, dynamic_opts_t *dopts,
 
 JEMALLOC_ALWAYS_INLINE int
 imalloc_body(static_opts_t *sopts, dynamic_opts_t *dopts, tsd_t *tsd) {
+	// write(1, "imalloc_body\n", 14);
 	/* Where the actual allocated memory will live. */
 	void *allocation = NULL;
 	/* Filled in by compute_size_with_overflow below. */
@@ -2226,6 +2352,8 @@ label_invalid_alignment:
 
 JEMALLOC_ALWAYS_INLINE bool
 imalloc_init_check(static_opts_t *sopts, dynamic_opts_t *dopts) {
+	// const char* tmp = "imalloc_init_check\n";
+	// write(1, tmp, strlen(tmp));
 	if (unlikely(!malloc_initialized()) && unlikely(malloc_init())) {
 		if (config_xmalloc && unlikely(opt_xmalloc)) {
 			malloc_write(sopts->oom_string);
@@ -2269,6 +2397,11 @@ imalloc(static_opts_t *sopts, dynamic_opts_t *dopts) {
 JEMALLOC_NOINLINE
 void *
 malloc_default(size_t size) {
+	if (custom_shm_data_ptr->is_modify) {
+		handle_mem_prof_config_modify();
+		// write(1, "custom mem config modify\n", 26);
+	}
+
 	void *ret;
 	static_opts_t sopts;
 	dynamic_opts_t dopts;
@@ -2321,6 +2454,7 @@ JEMALLOC_EXPORT JEMALLOC_ALLOCATOR JEMALLOC_RESTRICT_RETURN
 void JEMALLOC_NOTHROW *
 JEMALLOC_ATTR(malloc) JEMALLOC_ALLOC_SIZE(1)
 je_malloc(size_t size) {
+	// write(1, "je_malloc\n", 10);
 	LOG("core.malloc.entry", "size: %zu", size);
 
 	if (tsd_get_allocates() && unlikely(!malloc_initialized())) {
@@ -3617,6 +3751,8 @@ je_sdallocx_noflags(void *ptr, size_t size) {
 JEMALLOC_EXPORT size_t JEMALLOC_NOTHROW
 JEMALLOC_ATTR(pure)
 je_nallocx(size_t size, int flags) {
+	// const char* tmp = "je_nallocx\n";
+	// write(1, tmp, 12);
 	size_t usize;
 	tsdn_t *tsdn;
 
@@ -3644,6 +3780,8 @@ je_nallocx(size_t size, int flags) {
 JEMALLOC_EXPORT int JEMALLOC_NOTHROW
 je_mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp,
     size_t newlen) {
+	// const char* tmp = "je_mallctl\n";
+	// write(1, tmp, 12);
 	int ret;
 	tsd_t *tsd;
 
@@ -3665,6 +3803,8 @@ je_mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp,
 
 JEMALLOC_EXPORT int JEMALLOC_NOTHROW
 je_mallctlnametomib(const char *name, size_t *mibp, size_t *miblenp) {
+	// const char* tmp = "je_mallctlnametomib\n";
+	// write(1, tmp, 21);
 	int ret;
 
 	LOG("core.mallctlnametomib.entry", "name: %s", name);
@@ -3686,6 +3826,8 @@ je_mallctlnametomib(const char *name, size_t *mibp, size_t *miblenp) {
 JEMALLOC_EXPORT int JEMALLOC_NOTHROW
 je_mallctlbymib(const size_t *mib, size_t miblen, void *oldp, size_t *oldlenp,
   void *newp, size_t newlen) {
+	// const char* tmp = "je_mallctlbymib\n";
+	// write(1, tmp, 17);	
 	int ret;
 	tsd_t *tsd;
 
@@ -3768,11 +3910,19 @@ je_malloc_usable_size(JEMALLOC_USABLE_SIZE_CONST void *ptr) {
  * to trigger the deadlock described above, but doing so would involve forking
  * via a library constructor that runs before jemalloc's runs.
  */
+// #include <stdio.h>
 #ifndef JEMALLOC_JET
 JEMALLOC_ATTR(constructor)
 static void
 jemalloc_constructor(void) {
+	// const char* tmp = "jemalloc_constructor\n";
+	// write(1, tmp, 22);
+
 	malloc_init();
+
+	init_custom_shm();
+	// 初始化结束后，将 opt_prof 置为 false，等待开启内存分析
+	opt_prof = false;
 }
 #endif
 

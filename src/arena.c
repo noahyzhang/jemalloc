@@ -1597,7 +1597,7 @@ void
 arena_dalloc_promoted(tsdn_t *tsdn, void *ptr, tcache_t *tcache,
     bool slow_path) {
 	cassert(config_prof);
-	assert(opt_prof);
+	// assert(opt_prof);
 
 	extent_t *extent = iealloc(tsdn, ptr);
 	size_t usize = extent_usize_get(extent);
